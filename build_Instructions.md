@@ -29,10 +29,11 @@ brew install qt6 cmake git
    cd simplechat
    ```
 
-2. **Make build script executable**:
+2. **Make scripts executable**:
    ```bash
    chmod +x build.sh
    chmod +x launch_ring.sh
+   chmod +x tests/*.sh
    ```
 
 3. **Build the project**:
@@ -89,19 +90,58 @@ Launch each client in separate terminals:
 
 ## Testing the Implementation
 
-### Basic Functionality Test
-1. Launch 4 instances using the launch/test script
+### Automated Test Suite
+The project includes basic test cases to verify functionality:
+
+#### Running All Tests
+```bash
+# Run the complete test suite
+./tests/run_tests.sh
+```
+
+#### Individual Test Files
+```bash
+# Test basic functionality (client init, connectivity, message flow)
+./tests/basic_functionality_tests.sh
+
+# Test integration (end-to-end functionality, stability)
+./tests/integration_tests.sh
+```
+
+### Basic Test Cases Included
+
+#### 1. Basic Functionality Tests
+- Client initialization with different configurations
+- Command line options validation
+- Network connectivity between clients
+- Port management and listening
+- Ring network setup (4 clients)
+- Ring connectivity verification
+- Message flow through ring network
+- Message format validation
+
+#### 2. Integration Tests
+- Complete ring network integration
+- End-to-end message delivery
+- System stability under load
+- GUI application integration
+- Network resilience and recovery
+
+### Manual Testing
+
+#### Basic Functionality Test
+1. Launch 4 instances using the launch script
 2. Wait for all connections to establish (status shows "Connected")
 3. Send a message from Client1 to Client3
 4. Verify message appears in Client3's chat log
 5. Verify Client2 shows forwarding information
 
-### Message Ordering Test
+#### Message Ordering Test
 1. Send multiple messages quickly from the same client
 2. Verify messages arrive in the correct sequence order
 3. Check sequence numbers in the forwarding logs
 
-### Network Resilience Test
+#### Network Resilience Test
 1. Close one client instance
 2. Verify other clients attempt reconnection
 3. Restart the closed client
@@ -111,13 +151,16 @@ Launch each client in separate terminals:
 
 ```
 simplechat/
-├── main.cpp               # Application entry point
-├── simplechat.h           # Main class header
-├── simplechat.cpp         # Main class implementation  
-├── CMakeLists.txt         # CMake build configuration
-├── build.sh               # Automated build script
-├── launch_ring.sh         # Ring network launch script
-├── test_ring.sh           # Ring network test script
-└── README.md              # Comprehensive documentation
-└── build_instructions.md  # Build instructions and usage guide
+├── main.cpp              # Application entry point
+├── simplechat.h          # Main class header
+├── simplechat.cpp        # Main class implementation  
+├── CMakeLists.txt        # CMake build configuration
+├── build.sh              # Automated build script
+├── launch_ring.sh        # Ring network launch script
+├── README.md             # This documentation
+├── build_instructions.md # Build instructions and usage guide
+└── tests/                # Test suite directory
+    ├── run_tests.sh                    # Test runner
+    ├── basic_functionality_tests.sh    # Basic functionality tests
+    └── integration_tests.sh            # Integration tests
 ```

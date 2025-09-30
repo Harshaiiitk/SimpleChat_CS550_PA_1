@@ -70,10 +70,11 @@ brew install qt6 cmake git
    cd simplechat
    ```
 
-2. **Make build script executable**:
+2. **Make scripts executable**:
    ```bash
    chmod +x build.sh
    chmod +x launch_ring.sh
+   chmod +x tests/*.sh
    ```
 
 3. **Build the project**:
@@ -325,7 +326,6 @@ simplechat/
 ├── CMakeLists.txt        # CMake build configuration
 ├── build.sh              # Automated build script
 ├── launch_ring.sh        # Ring network launch script
-├── test_ring.sh          # Ring network test script
 ├── README.md             # This documentation
 ├── build_instructions.md # Build instructions and usage guide
 └── tests/                # Test suite directory
@@ -334,26 +334,6 @@ simplechat/
     └── integration_tests.sh            # Integration tests
 
 ```
-
-## Technical Implementation Details
-
-### Network Communication
-- **Server Component**: Each client runs a QTcpServer listening on its assigned port
-- **Client Component**: Each client maintains a QTcpSocket connection to the next peer
-- **Message Serialization**: Uses QDataStream with QVariantMap for structured data
-- **Protocol**: Custom protocol with magic headers and size prefixes for message framing
-
-### Message Processing
-- **Queue-based Processing**: Incoming messages are queued and processed asynchronously
-- **Destination Checking**: Messages are examined to determine if they're for the current client
-- **Automatic Forwarding**: Non-destination messages are automatically forwarded to the next peer
-- **Sequence Tracking**: Each client maintains its own sequence counter for sent messages
-
-### Error Handling
-- **Connection Monitoring**: Automatic detection of connection failures
-- **Reconnection Logic**: Exponential backoff for connection retry
-- **Data Validation**: Message integrity checking with magic headers
-- **Graceful Degradation**: Application continues running even with partial network failures
 
 ## Submission Files
 
@@ -370,7 +350,6 @@ The complete submission includes:
 
 3. **Deployment & Testing**
    - `launch_ring.sh` - Multi-instance launcher
-   - `test_ring.sh` - Ring network test script
    - `tests/run_tests.sh` - Test suite runner
    - `tests/basic_functionality_tests.sh` - Basic functionality test cases
    - `tests/integration_tests.sh` - Integration test cases
