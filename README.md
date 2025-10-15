@@ -1,42 +1,68 @@
-# SimpleChat - Ring Network Messaging Application
+# SimpleChat P2P - UDP-based Messaging Application
 
-A Qt6-based distributed chat application that implements a ring network topology for message passing between multiple client instances.
+A Qt6-based distributed chat application that implements a peer-to-peer (P2P) and broadcast messaging system over UDP with anti-entropy synchronization and retransmission timers. This supersedes the earlier ring/TCP design.
 
 ## Architecture Overview
 
-### Ring Network Topology
-```
-Client1:9001 → Client2:9002 → Client3:9003 → Client4:9004 → Client1:9001
-```
-
-Each client connects to exactly one peer (the next in the ring) and accepts connections from exactly one peer (the previous in the ring). Messages are forwarded around the ring until they reach their intended destination.
+### P2P Network Model
+- Each client listens on a UDP port and discovers peers via periodic local port discovery and optional manual peer addition.
+- Messages are direct peer-to-peer when the destination is known; otherwise, they can be broadcast and/or propagated via anti-entropy.
+- Anti-entropy uses a vector-clock-like summary so peers exchange missing messages across multiple hops.
 
 ### Key Concepts Implemented
 
-1. **TCP-Based Messaging**: Uses Qt's QTcpSocket for reliable message transmission
+1. **UDP Messaging**: Uses Qt's QUdpSocket for peer-to-peer and broadcast communication
 2. **Message Serialization**: Messages are serialized using Qt's QDataStream and QVariantMap
-3. **Ring Forwarding**: Messages travel around the ring until reaching their destination
-4. **Sequence Numbering**: Each message has a unique sequence number for ordering
+3. **Peer Discovery**: Periodic local port discovery and manual IP:Port addition
+4. **Sequence Numbering**: Per-origin sequence numbers for ordering and vector clock summarization
+5. **Anti-Entropy Sync**: Periodic vector clock exchange to identify and send missing messages
+6. **Retransmission Timers**: Unacknowledged messages are resent after short intervals
 
 ## Features
 
-- **GUI Interface**: Clean Qt6-based chat interface with message log and input areas
-- **Multi-line Support**: Text input supports multiple lines with word wrapping
-- **Auto-focus**: Input field automatically receives focus on startup
-- **Message Routing**: Messages are intelligently routed through the ring network
-- **Connection Management**: Automatic reconnection handling for network failures
-- **Real-time Status**: Live connection status and message forwarding information
+- **GUI Interface**: Qt6 UI with chat log, destination selector, and broadcast
+- **UDP P2P & Broadcast**: Direct peer messaging; broadcast with Destination = "-1"
+- **Discovery**: Automatic local port scan (9000-9009) and manual Add Peer (IP:Port)
+- **Anti-Entropy**: Vector clock exchange and on-demand sync of missing messages
+- **Reliability on UDP**: Acks and retransmissions (2s) for improved delivery
+- **Message Ordering**: Per-origin sequence numbers maintained and summarized
 
 ## Message Format
 
-Each message contains:
+All messages are QVariantMap-serialized via QDataStream with a magic header.
+
+- Chat messages:
 ```cpp
-QVariantMap message = {
-    {"ChatText", "The actual message content"},
-    {"Origin", "Unique sender identifier"},
-    {"Destination", "Intended recipient identifier"},
-    {"Sequence", 1} // Incremental sequence number
-};
+{
+    "Type": "message",
+    "ChatText": "The actual message content",
+    "Origin": "Unique sender ID",
+    "Destination": "Peer ID or \"-1\" for broadcast",
+    "Sequence": <int>,
+    "Timestamp": <ms since epoch>
+}
+```
+
+- Ack messages:
+```cpp
+{
+    "Type": "ack",
+    "Origin": "Ack sender ID",
+    "AckOrigin": "Original message origin",
+    "AckSequence": <int>
+}
+```
+
+- Discovery / response:
+```cpp
+{ "Type": "discovery", "Origin": "<id>", "Port": <int> }
+{ "Type": "discovery_response", "Origin": "<id>", "Port": <int> }
+```
+
+- Vector clock and sync:
+```cpp
+{ "Type": "vector_clock", "Origin": "<id>", "VectorClock": { "<origin>": <maxSeq>, ... } }
+{ "Type": "sync_message", "Origin": "<id>", "SyncOrigin": "<origin>", "SyncSequence": <int>, "SyncDestination": "<id|-1>", "SyncText": "..." }
 ```
 
 ## Build Requirements
@@ -96,38 +122,37 @@ make -j$(nproc)
 ```bash
 ./launch_ring.sh
 ```
-This launches all 4 clients in the correct ring topology.
+This launches 4 clients using UDP P2P. Each instance listens on its own port and performs local discovery. Some are primed with a known peer for faster discovery.
 
 ### Manual Launch
 Launch each client in separate terminals:
 
 ```bash
 # Terminal 1
-./build/bin/SimpleChat --client Client1 --listen 9001 --target 9002
+./build/bin/SimpleChat --client Client1 --port 9001
 
-# Terminal 2  
-./build/bin/SimpleChat --client Client2 --listen 9002 --target 9003
+# Terminal 2
+./build/bin/SimpleChat --client Client2 --port 9002 --peer 127.0.0.1:9001
 
 # Terminal 3
-./build/bin/SimpleChat --client Client3 --listen 9003 --target 9004
+./build/bin/SimpleChat --client Client3 --port 9003 --peer 127.0.0.1:9001
 
 # Terminal 4
-./build/bin/SimpleChat --client Client4 --listen 9004 --target 9001
+./build/bin/SimpleChat --client Client4 --port 9004 --peer 127.0.0.1:9001
 ```
 
 ## Usage Instructions
 
-1. **Start the ring network** using `./launch_ring.sh`
-2. **Wait for connections**: All clients should show "Connected" status
-3. **Select destination**: Use the dropdown to choose message recipient
-4. **Type message**: Enter your message in the input field
-5. **Send**: Click "Send" or press Enter
+1. Start the P2P network using `./launch_ring.sh` or manual launch as above
+2. Wait for discovery: the status shows connected peers and the dropdown populates
+3. Select a destination peer or use Broadcast
+4. Type a message and click Send (or press Enter)
+5. Peers exchange vector clocks periodically; missing messages are synced automatically
 
-### Message Flow Example
-- Client1 sends message to Client3
-- Message travels: Client1 → Client2 → Client3
-- Client2 forwards the message automatically
-- Client3 receives and displays the message
+### Message Flow Examples
+- Client1 sends a direct message to Client3 (if known): sent directly.
+- If destination is unknown, message may propagate via broadcast and anti-entropy.
+- Broadcast messages use Destination = -1 and are delivered to all peers.
 
 ## Testing the Implementation
 
@@ -142,10 +167,10 @@ The project includes basic test cases to verify functionality:
 
 #### Individual Test Files
 ```bash
-# Test basic functionality (client init, connectivity, message flow)
+# Test basic functionality (client init, UDP socket, discovery)
 ./tests/basic_functionality_tests.sh
 
-# Test integration (end-to-end functionality, stability)
+# Test integration (multi-instance, broadcast, anti-entropy stability)
 ./tests/integration_tests.sh
 ```
 
@@ -153,60 +178,56 @@ The project includes basic test cases to verify functionality:
 
 #### 1. Basic Functionality Tests
 - Client initialization with different configurations
-- Command line options validation
-- Network connectivity between clients
-- Port management and listening
-- Ring network setup (4 clients)
-- Ring connectivity verification
-- Message flow through ring network
+- Command line options validation (help/version/client/port/peer)
+- UDP socket binding on chosen port
+- Local discovery across ports 9000-9009
+- Manual peer addition via `--peer`
 - Message format validation
 
 #### 2. Integration Tests
-- Complete ring network integration
-- End-to-end message delivery
-- System stability under load
-- GUI application integration
-- Network resilience and recovery
+- Multi-instance P2P network (4 clients)
+- Direct messaging and broadcast delivery
+- Anti-entropy synchronization (vector clock, sync_message)
+- Retransmission and acks behavior
+- GUI presence and stability under brief load
 
 ### Manual Testing
 
 #### Basic Functionality Test
 1. Launch 4 instances using the launch script
-2. Wait for all connections to establish (status shows "Connected")
+2. Wait for discovery; the peers list should populate in each window
 3. Send a message from Client1 to Client3
-4. Verify message appears in Client3's chat log
-5. Verify Client2 shows forwarding information
+4. Verify Client3 shows the message; check acks in sender log
+5. Try Broadcast; all peers should display the message
 
-#### Message Ordering Test
+#### Message Ordering and Anti-Entropy Test
 1. Send multiple messages quickly from the same client
-2. Verify messages arrive in the correct sequence order
-3. Check sequence numbers in the forwarding logs
+2. Temporarily start a client late or disconnect/reconnect
+3. Verify late client catches up via anti-entropy (synced entries appear)
 
 #### Network Resilience Test
-1. Close one client instance
-2. Verify other clients attempt reconnection
-3. Restart the closed client
-4. Verify ring network re-establishes automatically
+1. Close one client instance and restart it
+2. Observe discovery re-adds the peer automatically
+3. Verify missing messages sync via anti-entropy
 
 ## Technical Implementation Details
 
 ### Network Communication
-- **Server Component**: Each client runs a QTcpServer listening on its assigned port
-- **Client Component**: Each client maintains a QTcpSocket connection to the next peer
-- **Message Serialization**: Uses QDataStream with QVariantMap for structured data
-- **Protocol**: Custom protocol with magic headers and size prefixes for message framing
+- **UDP Socket**: Each client runs a QUdpSocket bound to its port
+- **Discovery**: Periodic discovery messages to local ports 9000-9009 and manual `--peer`
+- **Serialization**: QDataStream + QVariantMap with magic header and size prefix
+- **Protocol**: Message types include message, ack, discovery, discovery_response, vector_clock, sync_message
 
 ### Message Processing
-- **Queue-based Processing**: Incoming messages are queued and processed asynchronously
-- **Destination Checking**: Messages are examined to determine if they're for the current client
-- **Automatic Forwarding**: Non-destination messages are automatically forwarded to the next peer
-- **Sequence Tracking**: Each client maintains its own sequence counter for sent messages
+- **Direct and Broadcast**: Messages sent directly if destination peer known, else broadcast
+- **Acks & Retransmission**: Pending acks tracked; messages resent after 2s if needed
+- **Vector Clock**: Peers summarize max sequence per origin; missing messages are synced
+- **Sequence Tracking**: Each origin maintains its own sequence numbers
 
 ### Error Handling
-- **Connection Monitoring**: Automatic detection of connection failures
-- **Reconnection Logic**: Exponential backoff for connection retry
-- **Data Validation**: Message integrity checking with magic headers
-- **Graceful Degradation**: Application continues running even with partial network failures
+- **Data Validation**: Magic header and size-checked QDataStream framing
+- **Timeouts**: Periodic timers for discovery, anti-entropy, and retransmission
+- **Graceful Operation**: Missing peers time out and are removed from the UI
 
 ## Troubleshooting
 
@@ -251,19 +272,15 @@ netstat -an | findstr 900
 
 ## Advanced Features
 
-### Custom Ring Topologies
-Modify the static peer configuration in `simplechat.h`:
-```cpp
-const QStringList SimpleChat::s_peerIds = {"NodeA", "NodeB", "NodeC"};
-const QList<int> SimpleChat::s_peerPorts = {8001, 8002, 8003};
-```
-
 ### Adding More Clients
-1. Update the peer lists in the header file
-2. Modify the launch script to include additional instances
-3. Ensure ring connectivity (last client connects to first)
+Simply start additional instances on unused local ports (e.g., 9005-9009). Pass `--peer` pointing to any known running peer to accelerate discovery.
 
-### Message Encryption
+### CLI Options
+- `--client/-c <id>`: Unique identifier for the instance
+- `--port/-p <port>`: UDP port to bind
+- `--peer/-P <ip:port>`: Optional; can be repeated to send initial discovery to known peers
+
+### Message Encryption (Optional)
 To add encryption, modify the serialization functions:
 ```cpp
 // In serializeMessage()
@@ -278,19 +295,18 @@ QByteArray decryptedData = decrypt(data);
 ## Performance Considerations
 
 ### Network Latency
-- **Ring Size**: Larger rings increase message delivery time
+- **Peer Count**: More peers can increase propagation time across hops
 - **Message Frequency**: High-frequency messaging may cause congestion
-- **Buffer Management**: Application uses queuing to handle message bursts
+- **Buffer Management**: Qt event loop handles bursts; retransmission tuned at 2s
 
 ### Memory Usage
 - **Message Queue**: Bounded to prevent memory leaks
 - **Connection Pooling**: Reuses connections efficiently
 - **GUI Updates**: Optimized text rendering for large chat logs
 
-### Scalability Limits
-- **Practical Ring Size**: Tested up to 10 nodes successfully
-- **Message Throughput**: ~1000 messages/second per node
-- **Network Overhead**: Each message forwarded adds ~1ms latency
+### Scalability Notes
+- **Practical Local Ports**: Defaults to scanning 9000-9009; extend if needed
+- **Vector Clock Growth**: Scales with number of origins
 
 
 ## Code Architecture
@@ -298,18 +314,19 @@ QByteArray decryptedData = decrypt(data);
 ### Class Hierarchy
 ```
 QMainWindow
-└── SimpleChat
+└── SimpleChatP2P
     ├── UI Components (QTextEdit, QLineEdit, etc.)
-    ├── Network Components (QTcpServer, QTcpSocket)
-    └── Message Management (Queue, Timer)
+    ├── Network Components (QUdpSocket)
+    └── Message Management (Vector clock, timers, acks)
 ```
 
 ### Key Methods
 - `setupUI()`: Initialize graphical interface
-- `setupNetwork()`: Configure TCP server and client connections
-- `sendMessageToRing()`: Serialize and send messages to next peer
-- `processReceivedMessage()`: Handle incoming messages (forward or display)
-- `connectToNext()`: Establish connection to next peer with retry logic
+- `setupNetwork()`: Configure UDP socket, timers, and initial discovery
+- `sendMessageToPeer()`: Serialize and send messages to a specific peer
+- `broadcastMessage()`: Send to all known peers
+- `processReceivedMessage()`: Handle incoming messages, acks, vector clocks, sync
+- `performAntiEntropy()`: Exchange vector clocks and sync missing messages
 
 ### Thread Safety
 - **Main Thread**: All GUI and network operations
@@ -321,8 +338,8 @@ QMainWindow
 ```
 simplechat/
 ├── main.cpp              # Application entry point
-├── simplechat.h          # Main class header
-├── simplechat.cpp        # Main class implementation  
+├── simplechatp2p.h          # Main class header
+├── simplechatp2p.cpp        # Main class implementation  
 ├── CMakeLists.txt        # CMake build configuration
 ├── build.sh              # Automated build script
 ├── launch_ring.sh        # Ring network launch script
@@ -341,8 +358,8 @@ The complete submission includes:
 
 1. **Source Code**
    - `main.cpp` - Application entry point
-   - `simplechat.h` - Main class header
-   - `simplechat.cpp` - Implementation
+   - `simplechatp2p.h` - P2P class header
+   - `simplechatp2p.cpp` - P2P implementation  
 
 2. **Build Configuration**
    - `CMakeLists.txt` - CMake configuration
