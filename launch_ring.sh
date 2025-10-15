@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# SimpleChat Ring Network Launch Script
-# This script launches 4 instances of SimpleChat in a ring configuration
+# SimpleChat P2P Launch Script
+# This script launches 4 instances of SimpleChat using UDP P2P + discovery
 
-echo "Starting SimpleChat Ring Network..."
+echo "Starting SimpleChat P2P Network..."
 
 # Build directory path
 BUILD_DIR="./build/bin"
@@ -23,24 +23,24 @@ pkill -f "SimpleChat" 2>/dev/null
 sleep 1
 
 # Launch instances in background
-echo "Launching Client1 (9001 -> 9002)..."
-$BUILD_DIR/SimpleChat --client Client1 --listen 9001 --target 9002 &
+echo "Launching Client1 (9001)..."
+$BUILD_DIR/SimpleChat --client Client1 --port 9001 &
 sleep 0.5
 
-echo "Launching Client2 (9002 -> 9003)..."
-$BUILD_DIR/SimpleChat --client Client2 --listen 9002 --target 9003 &
+echo "Launching Client2 (9002, peer 9001)..."
+$BUILD_DIR/SimpleChat --client Client2 --port 9002 --peer 127.0.0.1:9001 &
 sleep 0.5
 
-echo "Launching Client3 (9003 -> 9004)..."
-$BUILD_DIR/SimpleChat --client Client3 --listen 9003 --target 9004 &
+echo "Launching Client3 (9003, peer 9001)..."
+$BUILD_DIR/SimpleChat --client Client3 --port 9003 --peer 127.0.0.1:9001 &
 sleep 0.5
 
-echo "Launching Client4 (9004 -> 9001)..."
-$BUILD_DIR/SimpleChat --client Client4 --listen 9004 --target 9001 &
+echo "Launching Client4 (9004, peer 9001)..."
+$BUILD_DIR/SimpleChat --client Client4 --port 9004 --peer 127.0.0.1:9001 &
 sleep 0.5
 
 echo "All instances launched!"
-echo "Ring topology: Client1:9001 -> Client2:9002 -> Client3:9003 -> Client4:9004 -> Client1:9001"
+echo "Each peer does UDP discovery on local ports 9000-9009."
 echo ""
 echo "To stop all instances, run: pkill -f SimpleChat"
 echo "Press Ctrl+C to stop this script (instances will continue running)"
