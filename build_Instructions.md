@@ -55,38 +55,38 @@ make -j$(nproc)
 ```bash
 ./launch_ring.sh
 ```
-This launches all 4 clients in the correct ring topology.
+This launches all 4 clients using UDP P2P with discovery.
 
 ### Manual Launch
 Launch each client in separate terminals:
 
 ```bash
 # Terminal 1
-./build/bin/SimpleChat --client Client1 --listen 9001 --target 9002
+./build/bin/SimpleChat --client Client1 --port 9001
 
 # Terminal 2  
-./build/bin/SimpleChat --client Client2 --listen 9002 --target 9003
+./build/bin/SimpleChat --client Client2 --port 9002 --peer 127.0.0.1:9001
 
 # Terminal 3
-./build/bin/SimpleChat --client Client3 --listen 9003 --target 9004
+./build/bin/SimpleChat --client Client3 --port 9003 --peer 127.0.0.1:9001
 
 # Terminal 4
-./build/bin/SimpleChat --client Client4 --listen 9004 --target 9001
+./build/bin/SimpleChat --client Client4 --port 9004 --peer 127.0.0.1:9001
 ```
 
 ## Usage Instructions
 
-1. **Start the ring network** using `./launch_ring.sh`
-2. **Wait for connections**: All clients should show "Connected" status
-3. **Select destination**: Use the dropdown to choose message recipient
+1. **Start the P2P network** using `./launch_ring.sh`
+2. **Wait for discovery**: All clients should show connected peers in status
+3. **Select destination**: Use the dropdown to choose message recipient or select Broadcast
 4. **Type message**: Enter your message in the input field
 5. **Send**: Click "Send" or press Enter
 
 ### Message Flow Example
-- Client1 sends message to Client3
-- Message travels: Client1 → Client2 → Client3
-- Client2 forwards the message automatically
+- Client1 sends message to Client3 (direct P2P if peer known)
+- If destination unknown, message may be broadcast or propagated via anti-entropy
 - Client3 receives and displays the message
+- Broadcast messages (Destination = "-1") are delivered to all peers
 
 ## Testing the Implementation
 
@@ -101,10 +101,10 @@ The project includes basic test cases to verify functionality:
 
 #### Individual Test Files
 ```bash
-# Test basic functionality (client init, connectivity, message flow)
+# Test basic functionality (client init, UDP socket, discovery)
 ./tests/basic_functionality_tests.sh
 
-# Test integration (end-to-end functionality, stability)
+# Test integration (multi-instance, broadcast, anti-entropy stability)
 ./tests/integration_tests.sh
 ```
 
@@ -112,51 +112,48 @@ The project includes basic test cases to verify functionality:
 
 #### 1. Basic Functionality Tests
 - Client initialization with different configurations
-- Command line options validation
-- Network connectivity between clients
-- Port management and listening
-- Ring network setup (4 clients)
-- Ring connectivity verification
-- Message flow through ring network
+- Command line options validation (help/version/client/port/peer)
+- UDP socket binding on chosen port
+- Local discovery across ports 9000-9009
+- Manual peer addition via `--peer`
 - Message format validation
 
 #### 2. Integration Tests
-- Complete ring network integration
-- End-to-end message delivery
-- System stability under load
-- GUI application integration
-- Network resilience and recovery
+- Multi-instance P2P network (4 clients)
+- Direct messaging and broadcast delivery
+- Anti-entropy synchronization (vector clock, sync_message)
+- Retransmission and acks behavior
+- GUI presence and stability under brief load
 
 ### Manual Testing
 
 #### Basic Functionality Test
 1. Launch 4 instances using the launch script
-2. Wait for all connections to establish (status shows "Connected")
+2. Wait for discovery; the peers list should populate in each window
 3. Send a message from Client1 to Client3
-4. Verify message appears in Client3's chat log
-5. Verify Client2 shows forwarding information
+4. Verify Client3 shows the message; check acks in sender log
+5. Try Broadcast; all peers should display the message
 
-#### Message Ordering Test
+#### Message Ordering and Anti-Entropy Test
 1. Send multiple messages quickly from the same client
-2. Verify messages arrive in the correct sequence order
-3. Check sequence numbers in the forwarding logs
+2. Temporarily start a client late or disconnect/reconnect
+3. Verify late client catches up via anti-entropy (synced entries appear)
 
 #### Network Resilience Test
-1. Close one client instance
-2. Verify other clients attempt reconnection
-3. Restart the closed client
-4. Verify ring network re-establishes automatically
+1. Close one client instance and restart it
+2. Observe discovery re-adds the peer automatically
+3. Verify missing messages sync via anti-entropy
 
 ## File Structure
 
 ```
 simplechat/
 ├── main.cpp              # Application entry point
-├── simplechat.h          # Main class header
-├── simplechat.cpp        # Main class implementation  
+├── simplechatp2p.h       # Main class header
+├── simplechatp2p.cpp     # Main class implementation  
 ├── CMakeLists.txt        # CMake build configuration
 ├── build.sh              # Automated build script
-├── launch_ring.sh        # Ring network launch script
+├── launch_ring.sh        # P2P network launch script
 ├── README.md             # This documentation
 ├── build_instructions.md # Build instructions and usage guide
 └── tests/                # Test suite directory

@@ -16,11 +16,11 @@ set(CMAKE_AUTORCC ON)
 # Source files
 set(SOURCES
     main.cpp
-    simplechat.cpp
+    simplechatp2p.cpp
 )
 
 set(HEADERS
-    simplechat.h
+    simplechatp2p.h
 )
 
 # Create executable
