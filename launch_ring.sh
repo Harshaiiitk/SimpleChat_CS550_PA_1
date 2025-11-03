@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# SimpleChat P2P Launch Script
-# This script launches 4 instances of SimpleChat using UDP P2P + discovery
+# SimpleChat P2P Launch Script with DSDV Routing
+# This script launches 4 instances of SimpleChat using UDP P2P + DSDV routing
 
-echo "Starting SimpleChat P2P Network..."
+echo "Starting SimpleChat P2P Network with DSDV Routing..."
 
 # Build directory path
 BUILD_DIR="./build/bin"
@@ -40,7 +40,18 @@ $BUILD_DIR/SimpleChat --client Client4 --port 9004 --peer 127.0.0.1:9001 &
 sleep 0.5
 
 echo "All instances launched!"
-echo "Each peer does UDP discovery on local ports 9000-9009."
+echo ""
+echo "Features enabled:"
+echo "- UDP P2P discovery on local ports 9000-9009"
+echo "- DSDV routing for point-to-point messages"
+echo "- Route rumors sent every 60 seconds"
+echo "- Private messaging with hop limit"
+echo "- NAT traversal support with public endpoint discovery"
+echo ""
+echo "To test private messaging:"
+echo "1. Select a node from the 'Available Nodes' list"
+echo "2. Double-click to send a private message"
+echo "3. Messages will be routed through intermediate nodes if needed"
 echo ""
 echo "To stop all instances, run: pkill -f SimpleChat"
 echo "Press Ctrl+C to stop this script (instances will continue running)"

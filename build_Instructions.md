@@ -16,6 +16,8 @@ sudo apt install qt6-base-dev qt6-base-dev-tools cmake build-essential git
 brew install qt6 cmake git
 ```
 
+Note: Linux network namespaces (for NAT simulation) are not available on macOS. Run NAT tests on Linux or in a Linux VM.
+
 ### Windows Installation
 - Install Qt6 from [official website](https://www.qt.io/download)
 - Install CMake from [cmake.org](https://cmake.org/download/)
@@ -83,15 +85,26 @@ Launch each client in separate terminals:
 5. **Send**: Click "Send" or press Enter
 
 ### Message Flow Example
-- Client1 sends message to Client3 (direct P2P if peer known)
-- If destination unknown, message may be broadcast or propagated via anti-entropy
-- Client3 receives and displays the message
+- DSDV routing auto-discovers next hops via periodic route rumors
+- Private messages use `Dest`, `HopLimit`, and the DSDV table for forwarding
+- If no route is known, messages may be broadcast while routes converge
 - Broadcast messages (Destination = "-1") are delivered to all peers
+
+### DSDV Routing & Private Messaging
+- Route rumors: sent every 60s and at startup, with fields: `{"Type":"route_rumor","Origin":"<NodeID>","SeqNo":N}`
+- Routing table update: prefer higher sequence numbers; otherwise prefer direct routes, then fewer hops
+- Private messages: `{"Type":"private","Origin":"A","Dest":"B","ChatText":"...","HopLimit":10}`
+- GUI: node list shows discovered destinations with sequence and hop metrics; double-click to PM
+
+### NAT Traversal & Rendezvous Mode
+- All messages include `LastIP` and `LastPort` for public endpoint learning
+- Learned public endpoints are preferred for direct routing when available
+- Rendezvous: start a node with `--noforward` to avoid forwarding chat (still forwards rumors)
 
 ## Testing the Implementation
 
 ### Automated Test Suite
-The project includes basic test cases to verify functionality:
+The project includes tests aligned with DSDV, private messaging, and anti-entropy:
 
 #### Running All Tests
 ```bash
@@ -119,11 +132,20 @@ The project includes basic test cases to verify functionality:
 - Message format validation
 
 #### 2. Integration Tests
-- Multi-instance P2P network (4 clients)
-- Direct messaging and broadcast delivery
-- Anti-entropy synchronization (vector clock, sync_message)
-- Retransmission and acks behavior
-- GUI presence and stability under brief load
+- 4-node P2P network spin-up
+- Broadcast/direct delivery readiness checks
+- Anti-entropy (vector clock) presence
+- GUI process/window presence checks (best effort per OS)
+- Stability while running briefly
+
+### NAT Traversal Testing (Linux only)
+Run the Linux network namespace setup to simulate NAT types:
+```bash
+sudo ./nat_test.sh
+```
+This creates namespaces, sets up NAT (masquerade), launches a rendezvous (`--noforward`) and two NATed clients (`--connect <rendezvousPort>`). Verify that public endpoints are discovered and direct messaging works via DSDV.
+
+If you are on macOS/Windows, run the NAT test on a Linux host or VM.
 
 ### Manual Testing
 
@@ -143,6 +165,13 @@ The project includes basic test cases to verify functionality:
 1. Close one client instance and restart it
 2. Observe discovery re-adds the peer automatically
 3. Verify missing messages sync via anti-entropy
+
+## Known Limitations
+
+- NAT test script requires Linux (iproute2 + iptables). Not supported on macOS without a VM/containers.
+- GUI-based tests are best-effort; headless CI cannot validate interactive delivery.
+- Anti-entropy syncing is periodic; very short-lived nodes may not fully converge.
+- DSDV prefers direct routes at equal sequence numbers; in highly dynamic networks, route churn can occur.
 
 ## File Structure
 

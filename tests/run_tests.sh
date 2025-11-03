@@ -4,7 +4,7 @@
 # Runs the two main test files: basic functionality and integration tests
 
 echo "=========================================="
-echo "SimpleChat Test Suite Runner"
+echo "SimpleChat Test Suite Runner (DSDV/NAT)"
 echo "=========================================="
 
 # Get the directory where this script is located

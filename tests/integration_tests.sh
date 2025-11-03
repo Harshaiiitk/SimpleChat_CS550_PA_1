@@ -4,7 +4,7 @@
 # This test file covers end-to-end integration testing including
 # GUI functionality, message delivery, and system stability
 
-echo "=== SimpleChat P2P Integration Tests ==="
+echo "=== SimpleChat P2P Integration Tests (DSDV/NAT) ==="
 
 BUILD_DIR="./build/bin"
 
@@ -96,7 +96,7 @@ for i in {0..3}; do
 done
 
 # Test ring message routing paths
-echo "Confirming broadcast/direct functionality via GUI/manual interaction (non-headless)."
+echo "Confirming broadcast/direct functionality and DSDV routing via GUI/manual interaction (non-headless)."
 
 if [ "$MESSAGE_DELIVERY_OK" = true ]; then
     echo "✓ Message delivery integration test successful"

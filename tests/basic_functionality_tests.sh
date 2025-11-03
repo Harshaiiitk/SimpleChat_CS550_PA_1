@@ -4,7 +4,7 @@
 # This test file covers core functionality including client initialization, 
 # network connectivity, and basic message flow
 
-echo "=== SimpleChat P2P Basic Functionality Tests ==="
+echo "=== SimpleChat P2P Basic Functionality Tests (DSDV/NAT) ==="
 
 BUILD_DIR="./build/bin"
 
@@ -51,7 +51,7 @@ fi
 
 # Test command line options
 if $BUILD_DIR/SimpleChat --help > /tmp/help_test.log 2>&1; then
-    if grep -q "SimpleChatP2P" /tmp/help_test.log || grep -q "SimpleChat" /tmp/help_test.log; then
+    if grep -qi "DSDV" /tmp/help_test.log || grep -qi "SimpleChat" /tmp/help_test.log; then
         echo "✓ Help option works correctly"
         HELP_OK=true
     else
@@ -113,7 +113,7 @@ for PORT in 8001 8002; do
     fi
 done
 
-# Test 3: Multi-Instance P2P Setup
+##### Test 3: Multi-Instance P2P Setup
 echo -e "\n--- Test 3: Multi-Instance P2P Setup ---"
 cleanup
 
@@ -167,7 +167,7 @@ for PORT in 9001 9002 9003 9004; do
     fi
 done
 
-# Test 4: Message Flow Testing
+##### Test 4: Message Flow Testing
 echo -e "\n--- Test 4: Broadcast Message Format Validation ---"
 echo "Validating broadcast and message format..."
 
@@ -182,9 +182,27 @@ else
     MESSAGE_FORMAT_OK=false
 fi
 
+##### Test 5: Rendezvous No-Forward Sanity (spawn and exit quickly)
+echo -e "\n--- Test 5: Rendezvous No-Forward Sanity ---"
+cleanup
+if $BUILD_DIR/SimpleChat --client Rendezvous --port 9050 --noforward > /tmp/nofwd.log 2>&1 & then
+    NOFWD_PID=$!
+    sleep 2
+    if kill -0 $NOFWD_PID 2>/dev/null; then
+        echo "✓ Rendezvous (--noforward) starts successfully"
+        NOFWD_OK=true
+    else
+        echo "✗ Rendezvous (--noforward) failed to start"
+        NOFWD_OK=false
+    fi
+else
+    echo "✗ Rendezvous (--noforward) launch failed"
+    NOFWD_OK=false
+fi
+
 # Test Results Summary
 echo -e "\n=== Basic Functionality Test Results ==="
-if [ "$INIT_OK" = true ] && [ "$HELP_OK" = true ] && [ "$CONNECTIVITY_OK" = true ] && [ "$PORTS_OK" = true ] && [ "$RING_SETUP_OK" = true ] && [ "$RING_PORTS_OK" = true ] && [ "$MESSAGE_FORMAT_OK" = true ]; then
+if [ "$INIT_OK" = true ] && [ "$HELP_OK" = true ] && [ "$CONNECTIVITY_OK" = true ] && [ "$PORTS_OK" = true ] && [ "$RING_SETUP_OK" = true ] && [ "$RING_PORTS_OK" = true ] && [ "$MESSAGE_FORMAT_OK" = true ] && [ "$NOFWD_OK" = true ]; then
     echo "✓ PASS: All basic functionality tests successful"
     echo ""
     echo "Tested functionality:"
@@ -209,5 +227,6 @@ else
     [ "$RING_SETUP_OK" != true ] && echo "  - Multi-instance P2P setup failed"
     [ "$RING_PORTS_OK" != true ] && echo "  - UDP ports binding checks failed"
     [ "$MESSAGE_FORMAT_OK" != true ] && echo "  - Message format validation failed"
+    [ "$NOFWD_OK" != true ] && echo "  - Rendezvous (--noforward) launch failed"
     exit 1
 fi
