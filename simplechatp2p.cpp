@@ -6,8 +6,10 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QInputDialog>
+#include <QListWidgetItem>
+#include <QRandomGenerator>
 
-SimpleChatP2P::SimpleChatP2P(const QString& clientId, int port, QWidget *parent)
+SimpleChatP2P::SimpleChatP2P(const QString& clientId, int port, QWidget *parent, bool noForward)
     : QMainWindow(parent)
     , m_centralWidget(nullptr)
     , m_mainLayout(nullptr)
@@ -15,21 +17,29 @@ SimpleChatP2P::SimpleChatP2P(const QString& clientId, int port, QWidget *parent)
     , m_messageInput(nullptr)
     , m_sendButton(nullptr)
     , m_broadcastButton(nullptr)
+    , m_privateButton(nullptr)
     , m_destinationCombo(nullptr)
     , m_statusLabel(nullptr)
+    , m_nodeListWidget(nullptr)
     , m_udpSocket(nullptr)
     , m_discoveryTimer(new QTimer(this))
     , m_antiEntropyTimer(new QTimer(this))
     , m_retransmissionTimer(new QTimer(this))
+    , m_routeRumorTimer(new QTimer(this))
     , m_clientId(clientId)
     , m_port(port)
     , m_sequenceNumber(1)
+    , m_dsdvSequenceNumber(1)
+    , m_noForwardMode(noForward)
 {
     setupUI();
     setupNetwork();
     
-    setWindowTitle(QString("SimpleChat P2P - %1 (Port %2)").arg(m_clientId).arg(m_port));
-    resize(700, 600);
+    setWindowTitle(QString("SimpleChat P2P - %1 (Port %2)%3")
+                   .arg(m_clientId)
+                   .arg(m_port)
+                   .arg(m_noForwardMode ? " [NO-FORWARD]" : ""));
+    resize(900, 700);
 }
 
 SimpleChatP2P::~SimpleChatP2P()
@@ -50,11 +60,27 @@ void SimpleChatP2P::setupUI()
     m_statusLabel = new QLabel("Initializing P2P network...", this);
     m_mainLayout->addWidget(m_statusLabel);
     
-    // Chat log area
+    // Horizontal layout for chat and node list
+    QHBoxLayout* contentLayout = new QHBoxLayout();
+    
+    // Chat log area (left side)
+    QVBoxLayout* chatLayout = new QVBoxLayout();
     m_chatLog = new QTextEdit(this);
     m_chatLog->setReadOnly(true);
     m_chatLog->setWordWrapMode(QTextOption::WordWrap);
-    m_mainLayout->addWidget(m_chatLog);
+    chatLayout->addWidget(new QLabel("Chat Log:"));
+    chatLayout->addWidget(m_chatLog);
+    
+    // Node list area (right side)
+    QVBoxLayout* nodeLayout = new QVBoxLayout();
+    nodeLayout->addWidget(new QLabel("Available Nodes:"));
+    m_nodeListWidget = new QListWidget(this);
+    m_nodeListWidget->setMaximumWidth(200);
+    nodeLayout->addWidget(m_nodeListWidget);
+    
+    contentLayout->addLayout(chatLayout, 3);  // Chat takes 3/4 width
+    contentLayout->addLayout(nodeLayout, 1);  // Node list takes 1/4 width
+    m_mainLayout->addLayout(contentLayout);
     
     // Peer management area
     QHBoxLayout* peerLayout = new QHBoxLayout();
@@ -88,11 +114,22 @@ void SimpleChatP2P::setupUI()
     m_broadcastButton = new QPushButton("Broadcast", this);
     m_inputLayout->addWidget(m_broadcastButton);
     
+    // Private Message button
+    m_privateButton = new QPushButton("Private Msg", this);
+    m_inputLayout->addWidget(m_privateButton);
+    
     m_mainLayout->addLayout(m_inputLayout);
     
     // Connect signals
     connect(m_sendButton, &QPushButton::clicked, this, &SimpleChatP2P::sendMessage);
     connect(m_messageInput, &QLineEdit::returnPressed, this, &SimpleChatP2P::sendMessage);
+    connect(m_privateButton, &QPushButton::clicked, this, &SimpleChatP2P::sendPrivateMessage);
+    connect(m_nodeListWidget, &QListWidget::itemDoubleClicked, [this](QListWidgetItem* item) {
+        QString destination = item->text().split(" ")[0];  // Get node ID from list item
+        m_destinationCombo->setCurrentText(destination);
+        sendPrivateMessage();
+    });
+    
     connect(m_broadcastButton, &QPushButton::clicked, [this]() {
         QString messageText = m_messageInput->text().trimmed();
         if (messageText.isEmpty()) return;
@@ -126,6 +163,9 @@ void SimpleChatP2P::setupUI()
     
     addToMessageLog("Chat initialized. P2P mode with UDP.");
     addToMessageLog("Use 'Add Peer' to connect to other instances.");
+    if (m_noForwardMode) {
+        addToMessageLog("Running in NO-FORWARD mode (rendezvous server)");
+    }
 }
 
 void SimpleChatP2P::setupNetwork()
@@ -153,10 +193,91 @@ void SimpleChatP2P::setupNetwork()
     connect(m_retransmissionTimer, &QTimer::timeout, this, &SimpleChatP2P::checkMessageRetransmission);
     m_retransmissionTimer->start(RETRANSMISSION_INTERVAL);
     
-    m_statusLabel->setText(QString("Connected - %1 (UDP Port %2)").arg(m_clientId).arg(m_port));
+    // Setup route rumor timer for DSDV
+    connect(m_routeRumorTimer, &QTimer::timeout, this, &SimpleChatP2P::sendRouteRumor);
+    m_routeRumorTimer->start(ROUTE_RUMOR_INTERVAL);
     
-    // Start initial peer discovery
+    m_statusLabel->setText(QString("Connected - %1 (UDP Port %2)%3")
+                          .arg(m_clientId)
+                          .arg(m_port)
+                          .arg(m_noForwardMode ? " [NO-FORWARD]" : ""));
+    
+    // Start initial peer discovery and send initial route rumor
     performPeerDiscovery();
+    sendRouteRumor();  // Send initial route announcement
+}
+
+void SimpleChatP2P::sendPrivateMessage()
+{
+    QString messageText = m_messageInput->text().trimmed();
+    if (messageText.isEmpty()) {
+        return;
+    }
+    
+    QString destination = m_destinationCombo->currentText();
+    if (destination == "Select Peer..." || destination.isEmpty()) {
+        // Try to get from selected node in list
+        auto selectedItems = m_nodeListWidget->selectedItems();
+        if (selectedItems.isEmpty()) {
+            addToMessageLog("Please select a destination node");
+            return;
+        }
+        destination = selectedItems.first()->text().split(" ")[0];
+    }
+    
+    // Create private message with hop limit
+    QVariantMap message;
+    message["Dest"] = destination;
+    message["Origin"] = m_clientId;
+    message["ChatText"] = messageText;
+    message["HopLimit"] = static_cast<quint32>(DEFAULT_HOP_LIMIT);
+    message["Type"] = "private";
+    message["Sequence"] = m_sequenceNumber++;
+    
+    // Add NAT traversal information
+    message["LastIP"] = m_udpSocket->localAddress().toString();
+    message["LastPort"] = m_port;
+    
+    addToMessageLog(QString("→ Private to %1: %2").arg(destination, messageText), m_clientId);
+    
+    // Check if we have a route to the destination
+    if (m_routingTable.contains(destination)) {
+        const RouteEntry& route = m_routingTable[destination];
+        sendMessageToPeer(message, route.nextHop, route.nextPort);
+        addToMessageLog(QString("Routing via %1:%2").arg(route.nextHop.toString()).arg(route.nextPort));
+    } else {
+        // No route found, broadcast to discover route
+        addToMessageLog("No route to destination, broadcasting...");
+        broadcastMessage(message);
+    }
+    
+    m_messageInput->clear();
+    m_messageInput->setFocus();
+}
+
+void SimpleChatP2P::sendRouteRumor()
+{
+    // Create route rumor message
+    QVariantMap routeRumor;
+    routeRumor["Type"] = "route_rumor";
+    routeRumor["Origin"] = m_clientId;
+    routeRumor["SeqNo"] = m_dsdvSequenceNumber++;
+    
+    // Add NAT traversal information
+    routeRumor["LastIP"] = m_udpSocket->localAddress().toString();
+    routeRumor["LastPort"] = m_port;
+    
+    // Send to random neighbor
+    auto peers = getActivePeers();
+    if (!peers.isEmpty()) {
+        int randomIndex = QRandomGenerator::global()->bounded(peers.size());
+        const PeerInfo& peer = peers.at(randomIndex);
+        sendMessageToPeer(routeRumor, peer.address, peer.port);
+        
+        addToMessageLog(QString("Sent route rumor (seq %1) to %2")
+                       .arg(routeRumor["SeqNo"].toInt())
+                       .arg(peer.peerId));
+    }
 }
 
 void SimpleChatP2P::sendMessage()
@@ -181,6 +302,10 @@ void SimpleChatP2P::sendMessage()
     message["Type"] = "message";
     message["Timestamp"] = QDateTime::currentMSecsSinceEpoch();
     
+    // Add NAT traversal information
+    message["LastIP"] = m_udpSocket->localAddress().toString();
+    message["LastPort"] = m_port;
+    
     // Add to our own chat log
     addToMessageLog(QString("→ %1: %2").arg(destination, messageText), m_clientId);
     
@@ -193,17 +318,24 @@ void SimpleChatP2P::sendMessage()
     info.timestamp = QDateTime::currentDateTime();
     storeMessage(info);
     
-    // Send to destination peer
-    if (m_peers.contains(destination)) {
+    // Send to destination peer using DSDV routing if available
+    if (m_routingTable.contains(destination)) {
+        const RouteEntry& route = m_routingTable[destination];
+        sendMessageToPeer(message, route.nextHop, route.nextPort);
+        addToMessageLog(QString("Using DSDV route via %1:%2")
+                       .arg(route.nextHop.toString())
+                       .arg(route.nextPort));
+    } else if (m_peers.contains(destination)) {
+        // Fall back to direct send if peer is known
         const PeerInfo& peer = m_peers[destination];
         sendMessageToPeer(message, peer.address, peer.port);
-        
-        // Add to pending acknowledgments for retransmission
-        m_pendingAcks[m_clientId].insert(info.sequence);
     } else {
         addToMessageLog("Destination peer not found. Broadcasting...");
         broadcastMessage(message);
     }
+    
+    // Add to pending acknowledgments for retransmission
+    m_pendingAcks[m_clientId].insert(info.sequence);
     
     // Clear input
     m_messageInput->clear();
@@ -233,6 +365,11 @@ void SimpleChatP2P::processReceivedMessage(const QVariantMap& message, const QHo
     QString type = message["Type"].toString();
     QString origin = message["Origin"].toString();
     
+    // Process NAT information if present
+    if (message.contains("LastIP") && message.contains("LastPort")) {
+        processNATInfo(message, senderAddr, senderPort);
+    }
+    
     // Update peer information
     if (!origin.isEmpty() && origin != m_clientId) {
         updatePeerLastSeen(senderAddr, senderPort);
@@ -241,7 +378,29 @@ void SimpleChatP2P::processReceivedMessage(const QVariantMap& message, const QHo
         }
     }
     
-    if (type == "message") {
+    if (type == "route_rumor") {
+        processRouteRumor(message, senderAddr, senderPort);
+    } else if (type == "private") {
+        // Handle private messages with DSDV routing
+        QString dest = message["Dest"].toString();
+        
+        if (dest == m_clientId) {
+            // Message is for us
+            QString chatText = message["ChatText"].toString();
+            addToMessageLog(QString("← Private from %1: %2").arg(origin, chatText), origin);
+        } else {
+            // Forward the message if not in no-forward mode
+            if (!m_noForwardMode) {
+                forwardPrivateMessage(message);
+            }
+        }
+    } else if (type == "message") {
+        // Check if in no-forward mode
+        if (m_noForwardMode && message.contains("ChatText")) {
+            // Don't forward chat messages in no-forward mode
+            return;
+        }
+        
         QString destination = message["Destination"].toString();
         QString chatText = message["ChatText"].toString();
         int sequence = message["Sequence"].toInt();
@@ -275,6 +434,9 @@ void SimpleChatP2P::processReceivedMessage(const QVariantMap& message, const QHo
             addToMessageLog(QString("📢 %1: %2").arg(origin, chatText), origin);
         }
         
+        // Update DSDV routing table based on this message
+        updateRoutingTable(origin, senderAddr, senderPort, sequence, 1, true);
+        
     } else if (type == "ack") {
         QString ackOrigin = message["AckOrigin"].toString();
         int ackSequence = message["AckSequence"].toInt();
@@ -295,6 +457,8 @@ void SimpleChatP2P::processReceivedMessage(const QVariantMap& message, const QHo
         response["Type"] = "discovery_response";
         response["Origin"] = m_clientId;
         response["Port"] = m_port;
+        response["LastIP"] = m_udpSocket->localAddress().toString();
+        response["LastPort"] = m_port;
         sendMessageToPeer(response, senderAddr, senderPort);
         
     } else if (type == "discovery_response") {
@@ -324,6 +488,200 @@ void SimpleChatP2P::processReceivedMessage(const QVariantMap& message, const QHo
     }
 }
 
+void SimpleChatP2P::processRouteRumor(const QVariantMap& message, const QHostAddress& senderAddr, quint16 senderPort)
+{
+    QString origin = message["Origin"].toString();
+    int seqNo = message["SeqNo"].toInt();
+    
+    // Check if this is a new route rumor
+    if (seqNo > m_lastSeqNoSeen[origin]) {
+        m_lastSeqNoSeen[origin] = seqNo;
+        
+        // Update routing table
+        updateRoutingTable(origin, senderAddr, senderPort, seqNo, 1, true);
+        
+        // Forward to random neighbor (rumor propagation)
+        auto peers = getActivePeers();
+        if (!peers.isEmpty()) {
+            int randomIndex = QRandomGenerator::global()->bounded(peers.size());
+            const PeerInfo& peer = peers.at(randomIndex);
+            
+            // Don't send back to sender
+            if (peer.address != senderAddr || peer.port != senderPort) {
+                sendMessageToPeer(message, peer.address, peer.port);
+                addToMessageLog(QString("Forwarded route rumor from %1 (seq %2) to %3")
+                               .arg(origin).arg(seqNo).arg(peer.peerId));
+            }
+        }
+    }
+}
+
+void SimpleChatP2P::updateRoutingTable(const QString& destination, const QHostAddress& nextHop, 
+                                      quint16 nextPort, int seqNo, int hopCount, bool isDirect)
+{
+    RouteEntry newRoute;
+    newRoute.nextHop = nextHop;
+    newRoute.nextPort = nextPort;
+    newRoute.sequenceNumber = seqNo;
+    newRoute.hopCount = hopCount;
+    newRoute.lastUpdate = QDateTime::currentDateTime();
+    newRoute.isDirect = isDirect;
+    
+    // Check for public endpoints if available
+    if (m_publicEndpoints.contains(destination)) {
+        auto [publicIP, publicPort] = m_publicEndpoints[destination];
+        newRoute.publicIP = publicIP;
+        newRoute.publicPort = publicPort;
+    }
+    
+    // Check if we should update the route
+    if (!m_routingTable.contains(destination)) {
+        m_routingTable[destination] = newRoute;
+        addToMessageLog(QString("New route to %1 via %2:%3 (seq %4)")
+                       .arg(destination)
+                       .arg(nextHop.toString())
+                       .arg(nextPort)
+                       .arg(seqNo));
+        updateNodeList();
+    } else {
+        RouteEntry& oldRoute = m_routingTable[destination];
+        if (isBetterRoute(oldRoute, newRoute)) {
+            m_routingTable[destination] = newRoute;
+            addToMessageLog(QString("Updated route to %1 via %2:%3 (seq %4)")
+                           .arg(destination)
+                           .arg(nextHop.toString())
+                           .arg(nextPort)
+                           .arg(seqNo));
+            updateNodeList();
+        }
+    }
+}
+
+bool SimpleChatP2P::isBetterRoute(const RouteEntry& oldRoute, const RouteEntry& newRoute)
+{
+    // Prefer higher sequence numbers (fresher routes)
+    if (newRoute.sequenceNumber > oldRoute.sequenceNumber) {
+        return true;
+    }
+    
+    // If same sequence number, prefer direct routes (for NAT traversal)
+    if (newRoute.sequenceNumber == oldRoute.sequenceNumber && newRoute.isDirect && !oldRoute.isDirect) {
+        return true;
+    }
+    
+    // If same sequence number and directness, prefer shorter hop count
+    if (newRoute.sequenceNumber == oldRoute.sequenceNumber && 
+        newRoute.isDirect == oldRoute.isDirect && 
+        newRoute.hopCount < oldRoute.hopCount) {
+        return true;
+    }
+    
+    return false;
+}
+
+void SimpleChatP2P::forwardPrivateMessage(const QVariantMap& message)
+{
+    QString dest = message["Dest"].toString();
+    quint32 hopLimit = message["HopLimit"].toUInt();
+    
+    if (hopLimit > 0) {
+        // Decrement hop limit
+        QVariantMap forwardMsg = message;
+        forwardMsg["HopLimit"] = hopLimit - 1;
+        
+        // Update NAT traversal info
+        forwardMsg["LastIP"] = m_udpSocket->localAddress().toString();
+        forwardMsg["LastPort"] = m_port;
+        
+        // Check routing table for destination
+        if (m_routingTable.contains(dest)) {
+            const RouteEntry& route = m_routingTable[dest];
+            sendMessageToPeer(forwardMsg, route.nextHop, route.nextPort);
+            addToMessageLog(QString("Forwarding private message to %1 via %2:%3")
+                           .arg(dest)
+                           .arg(route.nextHop.toString())
+                           .arg(route.nextPort));
+        } else {
+            // No route found, broadcast to neighbors
+            broadcastMessage(forwardMsg);
+            addToMessageLog(QString("Broadcasting private message for %1 (no route)").arg(dest));
+        }
+    } else {
+        addToMessageLog(QString("Dropped private message to %1 (hop limit reached)").arg(dest));
+    }
+}
+
+void SimpleChatP2P::processNATInfo(const QVariantMap& message, const QHostAddress& senderAddr, quint16 senderPort)
+{
+    QString origin = message["Origin"].toString();
+    
+    // The sender's public endpoint is what we see
+    if (!origin.isEmpty() && origin != m_clientId) {
+        // Store the public endpoint we observed
+        addPublicEndpoint(origin, senderAddr, senderPort);
+        
+        // If the message contains LastIP/LastPort different from what we see,
+        // the sender is behind NAT
+        QString lastIP = message["LastIP"].toString();
+        quint16 lastPort = message["LastPort"].toUInt();
+        
+        QHostAddress reportedAddr(lastIP);
+
+        // Check if this is a meaningful NAT detection (not just 0.0.0.0 or localhost differences)
+        // and only log once per node
+        bool isRealNAT = (reportedAddr != senderAddr || lastPort != senderPort);
+        bool isNotLocalhost = !reportedAddr.isLoopback() && !senderAddr.isLoopback();
+        bool isNotAnyAddress = !reportedAddr.isNull() && lastIP != "0.0.0.0";
+
+        if (isRealNAT && isNotAnyAddress && !m_natDetected.contains(origin)) {
+            // Only log meaningful NAT scenarios and only once per node
+            if (isNotLocalhost) {
+                addToMessageLog(QString("NAT detected for %1: local %2:%3 → public %4:%5")
+                            .arg(origin)
+                            .arg(lastIP).arg(lastPort)
+                            .arg(senderAddr.toString()).arg(senderPort));
+                m_natDetected.insert(origin);
+            }
+        }
+    }
+}
+
+void SimpleChatP2P::addPublicEndpoint(const QString& nodeId, const QHostAddress& publicIP, quint16 publicPort)
+{
+    m_publicEndpoints[nodeId] = qMakePair(publicIP, publicPort);
+    
+    // Update routing table if we have a route to this node
+    if (m_routingTable.contains(nodeId)) {
+        m_routingTable[nodeId].publicIP = publicIP;
+        m_routingTable[nodeId].publicPort = publicPort;
+    }
+}
+
+void SimpleChatP2P::updateNodeList()
+{
+    m_nodeListWidget->clear();
+    
+    for (auto it = m_routingTable.begin(); it != m_routingTable.end(); ++it) {
+        QString nodeId = it.key();
+        const RouteEntry& route = it.value();
+        
+        QString displayText = QString("%1 (seq:%2, hop:%3)")
+                             .arg(nodeId)
+                             .arg(route.sequenceNumber)
+                             .arg(route.hopCount);
+        
+        if (route.isDirect) {
+            displayText += " [D]";
+        }
+        
+        if (!route.publicIP.isNull()) {
+            displayText += " [NAT]";
+        }
+        
+        m_nodeListWidget->addItem(displayText);
+    }
+}
+
 void SimpleChatP2P::sendMessageToPeer(const QVariantMap& message, const QHostAddress& addr, quint16 port)
 {
     QByteArray data = serializeMessage(message);
@@ -344,6 +702,8 @@ void SimpleChatP2P::performPeerDiscovery()
     discovery["Type"] = "discovery";
     discovery["Origin"] = m_clientId;
     discovery["Port"] = m_port;
+    discovery["LastIP"] = m_udpSocket->localAddress().toString();
+    discovery["LastPort"] = m_port;
     
     for (int port = BASE_PORT; port < BASE_PORT + MAX_PORTS; ++port) {
         if (port != m_port) {
@@ -368,6 +728,12 @@ void SimpleChatP2P::performPeerDiscovery()
         int index = m_destinationCombo->findText(peerId);
         if (index >= 0) {
             m_destinationCombo->removeItem(index);
+        }
+        
+        // Remove from routing table
+        if (m_routingTable.contains(peerId)) {
+            m_routingTable.remove(peerId);
+            updateNodeList();
         }
     }
 }
@@ -476,6 +842,9 @@ void SimpleChatP2P::checkMessageRetransmission()
                     
                     if (info.destination == "-1") {
                         broadcastMessage(message);
+                    } else if (m_routingTable.contains(info.destination)) {
+                        const RouteEntry& route = m_routingTable[info.destination];
+                        sendMessageToPeer(message, route.nextHop, route.nextPort);
                     } else if (m_peers.contains(info.destination)) {
                         const PeerInfo& peer = m_peers[info.destination];
                         sendMessageToPeer(message, peer.address, peer.port);
@@ -519,6 +888,8 @@ void SimpleChatP2P::addPeerManually()
     discovery["Type"] = "discovery";
     discovery["Origin"] = m_clientId;
     discovery["Port"] = m_port;
+    discovery["LastIP"] = m_udpSocket->localAddress().toString();
+    discovery["LastPort"] = m_port;
     sendMessageToPeer(discovery, addr, port);
     
     addToMessageLog(QString("Sent discovery to %1:%2").arg(ip).arg(port));
@@ -547,6 +918,9 @@ void SimpleChatP2P::addPeer(const QString& peerId, const QHostAddress& addr, qui
                        .arg(port));
         
         m_statusLabel->setText(QString("Connected - %1 peers").arg(m_peers.size()));
+        
+        // Update routing table with direct route
+        updateRoutingTable(peerId, addr, port, 0, 1, true);
     }
 }
 

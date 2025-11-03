@@ -9,6 +9,7 @@
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QLabel>
+#include <QtWidgets/QListWidget>
 #include <QtNetwork/QUdpSocket>
 #include <QTimer>
 #include <QMap>
@@ -31,12 +32,26 @@ struct VectorClock {
     QMap<QString, int> sequences; // origin -> highest sequence number seen
 };
 
+// DSDV Routing Table Entry
+struct RouteEntry {
+    QHostAddress nextHop;  // Next hop IP address
+    quint16 nextPort;      // Next hop port
+    int sequenceNumber;    // DSDV sequence number
+    int hopCount;          // Number of hops to destination
+    QDateTime lastUpdate;  // When this route was last updated
+    bool isDirect;         // Whether this is a direct route (for NAT traversal preference)
+    
+    // NAT traversal fields
+    QHostAddress publicIP;    // Public IP discovered through NAT
+    quint16 publicPort;      // Public port discovered through NAT
+};
+
 class SimpleChatP2P : public QMainWindow
 {
     Q_OBJECT
 
 public:
-    SimpleChatP2P(const QString& clientId, int port, QWidget *parent = nullptr);
+    SimpleChatP2P(const QString& clientId, int port, QWidget *parent = nullptr, bool noForward = false);
     ~SimpleChatP2P();
 
 private slots:
@@ -46,6 +61,8 @@ private slots:
     void performAntiEntropy();
     void checkMessageRetransmission();
     void addPeerManually();
+    void sendPrivateMessage();  // New: Private message handler
+    void sendRouteRumor();      // New: DSDV route announcement
 
 private:
     // UI Setup
@@ -57,6 +74,18 @@ private:
     void processReceivedMessage(const QVariantMap& message, const QHostAddress& senderAddr, quint16 senderPort);
     void sendMessageToPeer(const QVariantMap& message, const QHostAddress& addr, quint16 port);
     void broadcastMessage(const QVariantMap& message);
+    
+    // DSDV Routing
+    void updateRoutingTable(const QString& destination, const QHostAddress& nextHop, quint16 nextPort, 
+                          int seqNo, int hopCount, bool isDirect = false);
+    void processRouteRumor(const QVariantMap& message, const QHostAddress& senderAddr, quint16 senderPort);
+    void forwardPrivateMessage(const QVariantMap& message);
+    bool isBetterRoute(const RouteEntry& oldRoute, const RouteEntry& newRoute);
+    void updateNodeList();  // Update UI with available nodes
+    
+    // NAT Traversal
+    void processNATInfo(const QVariantMap& message, const QHostAddress& senderAddr, quint16 senderPort);
+    void addPublicEndpoint(const QString& nodeId, const QHostAddress& publicIP, quint16 publicPort);
     
     // Message storage
     void storeMessage(const MessageInfo& msgInfo);
@@ -94,9 +123,11 @@ private:
     QLineEdit* m_messageInput;
     QPushButton* m_sendButton;
     QPushButton* m_broadcastButton;
+    QPushButton* m_privateButton;   // New: Private message button
     QLabel* m_statusLabel;
     QLineEdit* m_peerAddressInput;
     QPushButton* m_addPeerButton;
+    QListWidget* m_nodeListWidget;   // New: List of discovered nodes
 
     // Network Components
     QUdpSocket* m_udpSocket;
@@ -105,11 +136,14 @@ private:
     QTimer* m_discoveryTimer;       // Peer discovery
     QTimer* m_antiEntropyTimer;     // Anti-entropy sync
     QTimer* m_retransmissionTimer;  // Message retransmission
+    QTimer* m_routeRumorTimer;      // New: Route rumor timer for DSDV
     
     // Configuration
     QString m_clientId;
     int m_port;
     int m_sequenceNumber;
+    int m_dsdvSequenceNumber;       // New: DSDV sequence number
+    bool m_noForwardMode;           // New: No-forward mode for rendezvous server
     
     // Message storage
     QMap<QString, QMap<int, MessageInfo>> m_messageStore; // origin -> (sequence -> MessageInfo)
@@ -118,13 +152,23 @@ private:
     // Peer management
     QMap<QString, PeerInfo> m_peers; // peerId -> PeerInfo
     
+    // DSDV Routing
+    QMap<QString, RouteEntry> m_routingTable; // destination -> RouteEntry
+    QMap<QString, int> m_lastSeqNoSeen; // origin -> last sequence number seen
+    
+    // NAT Traversal
+    QMap<QString, QPair<QHostAddress, quint16>> m_publicEndpoints; // nodeId -> (publicIP, publicPort)
+    QSet<QString> m_natDetected; // Track which nodes we've already logged NAT detection for
+    
     // Constants
     static const int DISCOVERY_INTERVAL = 5000;    // 5 seconds
     static const int ANTI_ENTROPY_INTERVAL = 3000; // 3 seconds
     static const int RETRANSMISSION_INTERVAL = 2000; // 2 seconds
+    static const int ROUTE_RUMOR_INTERVAL = 60000; // 60 seconds for route rumors
     static const int PEER_TIMEOUT = 30000;         // 30 seconds
     static const int BASE_PORT = 9000;
     static const int MAX_PORTS = 10;
+    static const int DEFAULT_HOP_LIMIT = 10;       // Default hop limit for private messages
 };
 
 #endif // SIMPLECHAT_P2P_H
