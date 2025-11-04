@@ -55,26 +55,26 @@ make -j$(nproc)
 
 ### Automatic Launch (Recommended)
 ```bash
-./launch_ring.sh
+./test_3nodes.sh
 ```
-This launches all 4 clients using UDP P2P with discovery.
+This launches all 3 clients using UDP P2P discovery should be done manully here.
 
 ### Manual Launch
 Launch each client in separate terminals:
 
 ```bash
 # Terminal 1
-./build/bin/SimpleChat --client Client1 --port 9001
+./build/bin/SimpleChat --client NodeA --port 12345 &
+NODEA_PID=$!
 
 # Terminal 2  
-./build/bin/SimpleChat --client Client2 --port 9002 --peer 127.0.0.1:9001
+./build/bin/SimpleChat --client NodeB --port 23456 --peer 127.0.0.1:12345 &
+NODEB_PID=$!
 
 # Terminal 3
-./build/bin/SimpleChat --client Client3 --port 9003 --peer 127.0.0.1:9001
+./build/binSimpleChat --client NodeC --port 34567 --peer 127.0.0.1:12345 &
+NODEC_PID=$!
 
-# Terminal 4
-./build/bin/SimpleChat --client Client4 --port 9004 --peer 127.0.0.1:9001
-```
 
 ## Usage Instructions
 
