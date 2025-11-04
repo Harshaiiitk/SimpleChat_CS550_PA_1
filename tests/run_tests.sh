@@ -44,13 +44,21 @@ run_test() {
     fi
 }
 
-# Run the two main test files
+# Run the test files
 echo "Starting SimpleChat test suite..."
 
-# Test 1: Basic Functionality Tests
+# Test 1: Core Functionality Tests (3 nodes as per requirements)
+echo -e "\n=========================================="
+echo "Note: Core Functionality Tests (3 nodes)"
+echo "=========================================="
+echo "To run core functionality tests with 3 nodes (NodeA, NodeB, NodeC):"
+echo "  ./test_3nodes.sh"
+echo ""
+
+# Test 2: Basic Functionality Tests
 run_test "Basic Functionality Tests" "tests/basic_functionality_tests.sh"
 
-# Test 2: Integration Tests
+# Test 3: Integration Tests
 echo -e "\n=========================================="
 echo "Running: Integration Tests"
 echo "=========================================="
@@ -64,6 +72,14 @@ else
     echo -e "\n✗ FAIL: Integration Tests failed"
     ((FAILED_TESTS++))
 fi
+
+# Test 4: NAT Traversal Tests (Linux only)
+echo -e "\n=========================================="
+echo "Note: NAT Traversal Tests (Linux only)"
+echo "=========================================="
+echo "To run NAT traversal verification tests:"
+echo "  run: sudo ./nat_test.sh"
+echo ""
 
 # Final Results Summary
 echo -e "\n=========================================="
